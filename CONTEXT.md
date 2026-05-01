@@ -201,8 +201,8 @@ _Avoid_: "log event" (the log file contains more than just agent output), "displ
 - A **bind-mount sandbox provider** supports all three **branch strategies**: **head** (default), **merge-to-head**, and **branch**
 - An **isolated sandbox provider** supports **merge-to-head** (default) and **branch** only -- **head** is not valid because it cannot write directly to the **host** filesystem
 - An **isolated sandbox provider** handles syncing code in and extracting commits out -- optionally using **bundle/patch sync**. **Isolated sandbox providers are defined in the type system but not yet implemented**
-- A **no-sandbox provider** supports all three **branch strategies** (default: **head**). It is only accepted by `interactive()`, not `run()` -- enforced at the type level. The **agent provider** does not receive `dangerouslySkipPermissions: true`
-- `interactive()` accepts all three **sandbox provider** types; `run()` accepts only **bind-mount** and **isolated**
+- A **no-sandbox provider** supports all three **branch strategies** (default: **head**). It is accepted by `run()` and `interactive()`. For `run()`, the **agent provider** receives `dangerouslySkipPermissions: true`, so this is a trusted **host** execution mode.
+- `run()` and `interactive()` accept all three **sandbox provider** types: **bind-mount**, **isolated**, and **no-sandbox**
 - `createSandbox()` does not accept a **no-sandbox provider**
 - **Sandbox providers** are imported from subpaths (e.g. `sandcastle/sandboxes/docker`) -- the main `sandcastle` entry point does not re-export any provider
 - **Host hooks** run on the **host**; **sandbox hooks** run inside the **sandbox**. Hooks are grouped under `host` and `sandbox` in the `hooks` option
@@ -256,7 +256,7 @@ _Avoid_: "log event" (the log file contains more than just agent output), "displ
 
 > **Dev:** "I want to use `interactive()` without Docker -- I'm sitting right here, I can approve permissions myself."
 
-> **Domain expert:** "Use the **no-sandbox provider**: `noSandbox()`. The **agent** runs directly on the **host** with no container. Sandcastle won't pass `--dangerously-skip-permissions` to the **agent provider**, so Claude Code's normal permission prompts stay active."
+> **Domain expert:** "Use the **no-sandbox provider**: `noSandbox()`. The **agent** runs directly on the **host** with no container. In `interactive()`, Sandcastle won't pass `--dangerously-skip-permissions` to the **agent provider**, so Claude Code's normal permission prompts stay active."
 
 > **Dev:** "Can I still use a worktree with `noSandbox()`?"
 
@@ -264,7 +264,7 @@ _Avoid_: "log event" (the log file contains more than just agent output), "displ
 
 > **Dev:** "What about using `noSandbox()` with `run()` for an AFK job?"
 
-> **Domain expert:** "That's not allowed -- `run()` doesn't accept a **no-sandbox provider**. This is enforced at the type level. AFK means unsupervised, so you need a real **sandbox** for isolation."
+> **Domain expert:** "`run()` accepts a **no-sandbox provider** too. The **agent** runs on the **host**, and Sandcastle still manages the **branch strategy**, logs, **prompt** processing, and commit collection. This is a trusted mode: the **agent provider** receives `dangerouslySkipPermissions: true`."
 
 ### Prompt system
 

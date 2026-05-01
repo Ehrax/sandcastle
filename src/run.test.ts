@@ -1,6 +1,9 @@
 import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { exec } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCompletionMessage,
@@ -15,10 +18,13 @@ import {
   type RunOptions,
   type RunResult,
 } from "./run.js";
-import { claudeCode } from "./AgentProvider.js";
+import { claudeCode, type AgentProvider } from "./AgentProvider.js";
 import { defaultImageName } from "./sandboxes/docker.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 import * as sandcastle from "./SandboxProvider.js";
 import { createBindMountSandboxProvider } from "./SandboxProvider.js";
+
+const execAsync = promisify(exec);
 
 const testSandbox = createBindMountSandboxProvider({
   name: "test",
@@ -30,6 +36,33 @@ const testSandbox = createBindMountSandboxProvider({
     close: async () => {},
   }),
 });
+
+const initRepo = async (dir: string) => {
+  await execAsync("git init -b main", { cwd: dir });
+  await execAsync('git config user.email "test@test.com"', { cwd: dir });
+  await execAsync('git config user.name "Test"', { cwd: dir });
+};
+
+const commitFile = async (
+  dir: string,
+  name: string,
+  content: string,
+  message: string,
+) => {
+  await writeFile(join(dir, name), content);
+  await execAsync(`git add "${name}"`, { cwd: dir });
+  await execAsync(`git commit -m "${message}"`, { cwd: dir });
+};
+
+const hostOnlyAgent: AgentProvider = {
+  name: "host-only-test-agent",
+  env: {},
+  captureSessions: false,
+  buildPrintCommand: () => ({
+    command: `printf '%s\n' 'host agent complete <promise>COMPLETE</promise>'`,
+  }),
+  parseStreamLine: (line) => [{ type: "result", result: line }],
+};
 
 describe("printFileDisplayStartup", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -243,7 +276,7 @@ describe("RunOptions", () => {
     const _opts: RunOptions = { prompt: "test" };
   });
 
-  it("requires sandbox field typed as SandboxProvider", () => {
+  it("requires sandbox field typed as AnySandboxProvider", () => {
     // @ts-expect-error sandbox is required
     const _opts: RunOptions = {
       agent: claudeCode("claude-opus-4-6"),
@@ -259,6 +292,16 @@ describe("RunOptions", () => {
       idleTimeoutSeconds: 120,
     };
     expect(opts.idleTimeoutSeconds).toBe(120);
+  });
+
+  it("allows noSandbox for host-only runs", () => {
+    const opts: RunOptions = {
+      agent: hostOnlyAgent,
+      sandbox: noSandbox(),
+      prompt: "test",
+      branchStrategy: { type: "merge-to-head" },
+    };
+    expect(opts.sandbox.name).toBe("no-sandbox");
   });
 
   it("allows idleTimeoutSeconds to be omitted (uses default)", () => {
@@ -337,6 +380,27 @@ describe("RunOptions", () => {
     // @ts-expect-error imageName is no longer a valid field on RunOptions
     expect(opts.imageName).toBeUndefined();
   });
+});
+
+describe("run() with noSandbox", () => {
+  it("runs an agent on the host worktree", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "sandcastle-nosandbox-run-"));
+    await initRepo(repoDir);
+    await commitFile(repoDir, "README.md", "hello", "initial commit");
+
+    const result = await run({
+      agent: hostOnlyAgent,
+      sandbox: noSandbox(),
+      prompt: "do the work",
+      cwd: repoDir,
+      branchStrategy: { type: "merge-to-head" },
+      logging: { type: "file", path: join(repoDir, "run.log") },
+    });
+
+    expect(result.branch).toBe("main");
+    expect(result.completionSignal).toBe("<promise>COMPLETE</promise>");
+    expect(result.stdout).toContain("host agent complete");
+  }, 15_000);
 });
 
 describe("signal (AbortSignal)", () => {

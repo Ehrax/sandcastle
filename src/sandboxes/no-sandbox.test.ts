@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { realpath } from "node:fs/promises";
 import { noSandbox } from "./no-sandbox.js";
 
 describe("noSandbox", () => {
@@ -63,7 +64,7 @@ describe("noSandbox", () => {
       });
 
       const result = await handle.exec("pwd", { cwd: "/tmp" });
-      expect(result.stdout.trim()).toBe("/tmp");
+      expect(result.stdout.trim()).toBe(await realpath("/tmp"));
     });
 
     it("exec ignores sudo option (no-op)", async () => {

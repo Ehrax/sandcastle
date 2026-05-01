@@ -65,16 +65,16 @@ await run({
 
 ## Sandbox Providers
 
-Sandcastle uses a `SandboxProvider` to create isolated environments. The `sandbox` option on `run()` and `createSandbox()` accepts any provider. A no-sandbox option is also available for `interactive()` and `wt.interactive()`. Built-in providers:
+Sandcastle uses a sandbox provider to decide where the agent runs. The `sandbox` option on `run()` accepts Docker, Podman, Vercel, or no-sandbox providers. `createSandbox()` accepts Docker, Podman, and Vercel providers. Built-in providers:
 
-| Provider   | Import path                                | Type       | Accepted by                                   |
-| ---------- | ------------------------------------------ | ---------- | --------------------------------------------- |
-| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`   |
-| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`   |
-| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`   |
-| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `interactive()`, `wt.interactive()` (default) |
+| Provider   | Import path                                | Type       | Accepted by                                            |
+| ---------- | ------------------------------------------ | ---------- | ------------------------------------------------------ |
+| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`            |
+| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`            |
+| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`            |
+| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `interactive()`, `wt.interactive()` (default) |
 
-Worktree methods (`wt.run()`, `wt.interactive()`, `wt.createSandbox()`) accept the same providers as their top-level counterparts. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
+Worktree methods keep the existing split: `wt.run()` and `wt.createSandbox()` accept Docker, Podman, and Vercel providers, while `wt.interactive()` also accepts `noSandbox()` and defaults to it when no sandbox is specified.
 
 ```typescript
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -89,7 +89,15 @@ await run({
   prompt: "...",
 });
 
-// No-sandbox runs the agent directly on the host — interactive() only:
+// No-sandbox runs the agent directly on the host:
+await run({
+  agent: claudeCode("claude-opus-4-6"),
+  sandbox: noSandbox(),
+  branchStrategy: { type: "merge-to-head" },
+  prompt: "Fix the native app and run the host-only checks.",
+});
+
+// You can also use no-sandbox for an interactive session:
 await interactive({
   agent: claudeCode("claude-opus-4-6"),
   sandbox: noSandbox(),

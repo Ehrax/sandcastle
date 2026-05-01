@@ -18,6 +18,7 @@ import { copyToWorktree } from "./CopyToWorktree.js";
 import { Display } from "./Display.js";
 import type {
   SandboxProvider,
+  AnySandboxProvider,
   BranchStrategy,
   BindMountSandboxProvider,
   BindMountSandboxHandle,
@@ -180,7 +181,7 @@ export class SandboxConfig extends Context.Tag("SandboxConfig")<
     /** When specified, the run name is included in the auto-generated branch and worktree names. */
     readonly name?: string;
     /** Sandbox provider — delegates sandbox lifecycle to the provider. */
-    readonly sandboxProvider: SandboxProvider;
+    readonly sandboxProvider: AnySandboxProvider;
     /** Branch strategy — controls how the agent's changes relate to branches. */
     readonly branchStrategy: BranchStrategy;
     /** Lifecycle hooks grouped by execution location (host or sandbox). */
@@ -356,6 +357,140 @@ export const WorktreeDockerSandboxFactory = {
           E | SandboxError,
           Exclude<R, Sandbox>
         > => {
+          if (sandboxProvider.tag === "none") {
+            if (isHeadMode) {
+              return (
+                hooks?.host?.onWorktreeReady?.length
+                  ? runHostHooks(
+                      hooks.host.onWorktreeReady,
+                      hostRepoDir,
+                      signal,
+                    )
+                  : Effect.void
+              ).pipe(
+                Effect.flatMap(() =>
+                  Effect.acquireUseRelease(
+                    Effect.tryPromise({
+                      try: () =>
+                        sandboxProvider.create({
+                          worktreePath: hostRepoDir,
+                          env,
+                        }),
+                      catch: (e) =>
+                        new WorktreeError({
+                          message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
+                        }),
+                    }).pipe(
+                      Effect.map((handle) => ({
+                        handle,
+                        sandboxLayer: makeSandboxLayerFromHandle(handle),
+                        worktreePath: handle.worktreePath,
+                      })),
+                    ),
+                    ({ sandboxLayer, worktreePath }) =>
+                      makeEffect({
+                        hostWorktreePath: hostRepoDir,
+                        sandboxRepoPath: worktreePath,
+                      }).pipe(Effect.provide(sandboxLayer)) as Effect.Effect<
+                        A,
+                        E | SandboxError,
+                        Exclude<R, Sandbox>
+                      >,
+                    ({ handle }) =>
+                      Effect.tryPromise({
+                        try: () => handle.close(),
+                        catch: () => undefined,
+                      }).pipe(Effect.orDie),
+                  ).pipe(
+                    Effect.map((value) => ({
+                      value,
+                      preservedWorktreePath: undefined,
+                    })),
+                  ),
+                ),
+              );
+            }
+
+            let preservedWorktreePath: string | undefined;
+
+            return Effect.acquireUseRelease(
+              pruneAndCreate().pipe(
+                Effect.flatMap((worktreeInfo) =>
+                  (copyPaths && copyPaths.length > 0
+                    ? display.spinner(
+                        "Copying to worktree",
+                        copyToWorktree(
+                          copyPaths,
+                          hostRepoDir,
+                          worktreeInfo.path,
+                          timeouts?.copyToWorktreeMs,
+                        ),
+                      )
+                    : Effect.succeed(undefined)
+                  ).pipe(Effect.map(() => worktreeInfo)),
+                ),
+                Effect.tap((worktreeInfo) =>
+                  hooks?.host?.onWorktreeReady?.length
+                    ? runHostHooks(
+                        hooks.host.onWorktreeReady,
+                        worktreeInfo.path,
+                        signal,
+                      )
+                    : Effect.void,
+                ),
+                Effect.flatMap((worktreeInfo) =>
+                  Effect.tryPromise({
+                    try: () =>
+                      sandboxProvider.create({
+                        worktreePath: worktreeInfo.path,
+                        env,
+                      }),
+                    catch: (e) =>
+                      new WorktreeError({
+                        message: `Provider '${sandboxProvider.name}' create failed: ${e instanceof Error ? e.message : String(e)}`,
+                      }),
+                  }).pipe(
+                    Effect.map((handle) => ({
+                      worktreeInfo,
+                      handle,
+                      sandboxLayer: makeSandboxLayerFromHandle(handle),
+                      worktreePath: handle.worktreePath,
+                    })),
+                  ),
+                ),
+              ),
+              ({ worktreeInfo, sandboxLayer, worktreePath }) =>
+                makeEffect({
+                  hostWorktreePath: worktreeInfo.path,
+                  sandboxRepoPath: worktreePath,
+                }).pipe(Effect.provide(sandboxLayer)) as Effect.Effect<
+                  A,
+                  E | SandboxError,
+                  Exclude<R, Sandbox>
+                >,
+              ({ worktreeInfo, handle }, exit) =>
+                Effect.tryPromise({
+                  try: () => handle.close(),
+                  catch: () => undefined,
+                }).pipe(
+                  Effect.andThen(cleanupWorktree(worktreeInfo.path, exit)),
+                  Effect.tap((p) => {
+                    preservedWorktreePath = p;
+                  }),
+                  Effect.asVoid,
+                  Effect.orDie,
+                ),
+            ).pipe(
+              Effect.map((value) => ({
+                value,
+                preservedWorktreePath,
+              })),
+              Effect.mapError((e: E | SandboxError) =>
+                attachPreservedPath(preservedWorktreePath, e),
+              ),
+            );
+          }
+
           // Isolated providers: create worktree, sync via git bundle
           if (sandboxProvider.tag === "isolated") {
             let preservedPath: string | undefined;
@@ -504,7 +639,12 @@ export const WorktreeDockerSandboxFactory = {
                 (copyPaths && copyPaths.length > 0
                   ? display.spinner(
                       "Copying to worktree",
-                      copyToWorktree(copyPaths, hostRepoDir, worktreeInfo.path, timeouts?.copyToWorktreeMs),
+                      copyToWorktree(
+                        copyPaths,
+                        hostRepoDir,
+                        worktreeInfo.path,
+                        timeouts?.copyToWorktreeMs,
+                      ),
                     )
                   : Effect.succeed(undefined)
                 ).pipe(Effect.map(() => worktreeInfo)),
